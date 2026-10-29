@@ -1,7 +1,7 @@
 import 'package:bett_box/common/common.dart';
 import 'package:bett_box/enum/enum.dart';
 import 'package:bett_box/widgets/fade_box.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import 'text.dart';
 
@@ -91,6 +91,7 @@ class CommonCard extends StatelessWidget {
     this.enterAnimated = false,
     this.info,
     this.clipBehavior = Clip.antiAlias,
+    this.elevated = true,
   }) : isSelected = isSelected ?? false;
 
   final bool enterAnimated;
@@ -104,6 +105,7 @@ class CommonCard extends StatelessWidget {
   final CommonCardType type;
   final double? radius;
   final Clip clipBehavior;
+  final bool elevated;
 
   // final WidgetStateProperty<Color?>? backgroundColor;
   // final WidgetStateProperty<BorderSide?>? borderSide;
@@ -126,7 +128,7 @@ class CommonCard extends StatelessWidget {
       color: isSelected
           ? colorScheme.primary
           : colorScheme.outlineVariant.withValues(
-              alpha: isLight ? 0.45 : 0.25,
+              alpha: elevated ? (isLight ? 0.65 : 0.35) : (isLight ? 0.8 : 0.4),
             ),
       strokeAlign: BorderSide.strokeAlignInside,
     );
@@ -174,26 +176,17 @@ class CommonCard extends StatelessWidget {
       childWidget = Stack(children: children);
     }
 
-    Widget contentWidget = childWidget;
-    if (clipBehavior != Clip.none) {
-      contentWidget = ClipRRect(
-        borderRadius: BorderRadius.circular(actualRadius),
-        clipBehavior: clipBehavior,
-        child: childWidget,
-      );
-    }
-
     final isInteractive = onPressed != null || onLongPress != null;
-    final card = OutlinedButton(
+    final isLight = context.colorScheme.brightness == Brightness.light;
+    final shape = RoundedSuperellipseBorder(
+      borderRadius: BorderRadius.circular(actualRadius),
+    );
+    Widget card = OutlinedButton(
       onLongPress: onLongPress,
       clipBehavior: clipBehavior,
       style: ButtonStyle(
         padding: const WidgetStatePropertyAll(EdgeInsets.zero),
-        shape: WidgetStatePropertyAll(
-          RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(actualRadius),
-          ),
-        ),
+        shape: WidgetStatePropertyAll(shape),
         iconColor: WidgetStatePropertyAll(context.colorScheme.primary),
         iconSize: WidgetStateProperty.all(20),
         backgroundColor: WidgetStateProperty.resolveWith(
@@ -206,8 +199,24 @@ class CommonCard extends StatelessWidget {
         tapTargetSize: isInteractive ? null : MaterialTapTargetSize.shrinkWrap,
       ),
       onPressed: onPressed,
-      child: contentWidget,
+      child: childWidget,
     );
+
+    if (elevated) {
+      card = DecoratedBox(
+        decoration: ShapeDecoration(
+          shape: shape,
+          shadows: [
+            BoxShadow(
+              blurRadius: 10,
+              offset: const Offset(0, 2),
+              color: Colors.black.withValues(alpha: isLight ? 0.045 : 0.25),
+            ),
+          ],
+        ),
+        child: card,
+      );
+    }
 
     return switch (enterAnimated) {
       true => FadeScaleEnterBox(child: card),

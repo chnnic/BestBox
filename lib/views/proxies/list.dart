@@ -1,36 +1,40 @@
+import 'dart:math' as math;
+
 import 'package:bett_box/common/common.dart';
 import 'package:bett_box/enum/enum.dart';
 import 'package:bett_box/models/models.dart';
 import 'package:bett_box/providers/providers.dart';
 import 'package:bett_box/state.dart';
 import 'package:bett_box/widgets/widgets.dart';
-import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:material_ui/material_ui.dart';
 
 import 'card.dart';
 import 'common.dart';
 
-class ProxiesListView extends ConsumerWidget {
+class ProxiesListView extends StatelessWidget {
   const ProxiesListView({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final state = ref.watch(proxiesListStateProvider);
+  Widget build(BuildContext context) {
+    return ActiveConsumer(
+      builder: (_, ref) {
+        final state = ref.watch(proxiesListStateProvider);
 
-    if (state.groups.isEmpty) {
-      return NullStatus(
-        label: appLocalizations.nullTip(appLocalizations.proxies),
-      );
-    }
+        if (state.groups.isEmpty) {
+          return NullStatus(
+            label: appLocalizations.nullTip(appLocalizations.proxies),
+          );
+        }
 
-    return _ProxyGroupsList(
-      groups: state.groups,
-      columns: state.columns,
-      cardType: state.proxyCardType,
-      sortType: state.proxiesSortType,
-      sortNum: state.sortNum,
-      currentUnfoldSet: state.currentUnfoldSet,
+        return _ProxyGroupsList(
+          groups: state.groups,
+          columns: state.columns,
+          cardType: state.proxyCardType,
+          currentUnfoldSet: state.currentUnfoldSet,
+        );
+      },
     );
   }
 }
@@ -39,16 +43,12 @@ class _ProxyGroupsList extends ConsumerStatefulWidget {
   final List<Group> groups;
   final int columns;
   final ProxyCardType cardType;
-  final ProxiesSortType sortType;
-  final num sortNum;
   final Set<String> currentUnfoldSet;
 
   const _ProxyGroupsList({
     required this.groups,
     required this.columns,
     required this.cardType,
-    required this.sortType,
-    required this.sortNum,
     required this.currentUnfoldSet,
   });
 
@@ -56,29 +56,67 @@ class _ProxyGroupsList extends ConsumerStatefulWidget {
   ConsumerState<_ProxyGroupsList> createState() => _ProxyGroupsListState();
 }
 
-class _ProxyGroupsListState extends ConsumerState<_ProxyGroupsList> {
-  final ScrollController _scrollController = ScrollController();
-  final Map<String, List<Proxy>> _cachedSortedProxiesMap = {};
+class _ProxyGroupsListState extends ConsumerState<_ProxyGroupsList>
+    with SingleTickerProviderStateMixin {
+  static final _expandSlide = Tween<Offset>(
+    begin: const Offset(0, -0.16),
+    end: Offset.zero,
+  );
+  static final List<CurveTween> _rowFadeTweens = List<CurveTween>.generate(7, (
+    index,
+  ) {
+    final begin = index * 0.07;
+    return CurveTween(
+      curve: Interval(begin, begin + 0.58, curve: Curves.easeOutCubic),
+    );
+  }, growable: false);
 
-  List<Proxy> _getGroupSortedProxies(Group group) {
-    return _cachedSortedProxiesMap.putIfAbsent(
-      group.name,
-      () => globalState.appController.getSortProxies(
-        proxies: group.all,
-        sortType: widget.sortType,
-        testUrl: group.testUrl,
-      ),
+  final ScrollController _scrollController = ScrollController();
+  final _sliverCache = <String, (Group, Object, Widget)>{};
+  late final AnimationController _expandController;
+  String? _expandingGroup;
+
+  @override
+  void initState() {
+    super.initState();
+    _expandController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 320),
+      value: 1,
     );
   }
 
+  Set<String> _groupsWithRows(_ProxyGroupsList target) {
+    return {
+      for (final group in target.groups)
+        if (target.currentUnfoldSet.contains(group.name) &&
+            group.all.isNotEmpty)
+          group.name,
+    };
+  }
+
   @override
-  void didUpdateWidget(covariant _ProxyGroupsList oldWidget) {
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _sliverCache.clear();
+  }
+
+  @override
+  void didUpdateWidget(_ProxyGroupsList oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!identical(widget.groups, oldWidget.groups) ||
-        widget.sortType != oldWidget.sortType ||
-        widget.sortNum != oldWidget.sortNum) {
-      _cachedSortedProxiesMap.clear();
+    if (oldWidget.columns != widget.columns ||
+        oldWidget.cardType != widget.cardType) {
+      _sliverCache.clear();
+    } else if (!identical(oldWidget.groups, widget.groups)) {
+      final names = {for (final group in widget.groups) group.name};
+      _sliverCache.removeWhere((name, _) => !names.contains(name));
     }
+    final added = _groupsWithRows(
+      widget,
+    ).difference(_groupsWithRows(oldWidget));
+    if (added.length != 1 || !TickerMode.valuesOf(context).enabled) return;
+    _expandingGroup = added.first;
+    _expandController.forward(from: 0);
   }
 
   void _handleToggle(String groupName) {
@@ -93,12 +131,16 @@ class _ProxyGroupsListState extends ConsumerState<_ProxyGroupsList> {
 
   double _getHeaderHeight() {
     final measure = globalState.measure;
-    final contentRowHeight = [
+    final contentRowHeight = math.max(
       40.0,
       measure.titleMediumHeight + 4 + measure.labelMediumHeight,
-    ].reduce((a, b) => a > b ? a : b);
+    );
     return 28.0 + contentRowHeight;
   }
+
+  static const _pinnedInset = 8.0;
+  static const _edgeFadeInset = 16.0;
+  double _rise = 0;
 
   void _scrollToSelected(String groupName) {
     if (!_scrollController.hasClients) return;
@@ -122,21 +164,21 @@ class _ProxyGroupsListState extends ConsumerState<_ProxyGroupsList> {
       }
       final isExpand = widget.currentUnfoldSet.contains(group.name);
       final rowCount = isExpand
-          ? (_getGroupSortedProxies(group).length / widget.columns).ceil()
+          ? (group.all.length / widget.columns).ceil()
           : 0;
       targetOffset += headerHeight + 8.0 + rowCount * (itemHeight + 8.0);
     }
     final group = targetGroup;
     if (group == null) return;
 
-    final sortedProxies = _getGroupSortedProxies(group);
-    final proxyIndex = sortedProxies.indexWhere((p) => p.name == selectedName);
+    final proxyIndex = group.all.indexWhere((p) => p.name == selectedName);
     if (proxyIndex >= 0) {
       final rowIndex = proxyIndex ~/ widget.columns;
       if (autoStickyHeader) {
-        targetOffset += rowIndex * (itemHeight + 8.0);
+        targetOffset += rowIndex * (itemHeight + 8.0) - _pinnedInset;
       } else {
         targetOffset += headerHeight + 8.0 + rowIndex * (itemHeight + 8.0);
+        if (_rise > 0) targetOffset -= _edgeFadeInset;
       }
     }
 
@@ -153,17 +195,19 @@ class _ProxyGroupsListState extends ConsumerState<_ProxyGroupsList> {
     int rowIndex,
     double itemHeight,
   ) {
-    final start = rowIndex * widget.columns;
-    final end = start + widget.columns < sortedProxies.length
-        ? start + widget.columns
-        : sortedProxies.length;
-    final rowProxies = sortedProxies.sublist(start, end);
+    final columns = widget.columns;
+    final start = rowIndex * columns;
+    final totalLength = sortedProxies.length;
 
-    final cardWidgets = <Widget>[];
-    for (var i = 0; i < widget.columns; i++) {
-      if (i < rowProxies.length) {
-        final proxy = rowProxies[i];
-        cardWidgets.add(
+    final rowChildren = <Widget>[];
+    for (var i = 0; i < columns; i++) {
+      if (i > 0) {
+        rowChildren.add(const SizedBox(width: 8));
+      }
+      final proxyIndex = start + i;
+      if (proxyIndex < totalLength) {
+        final proxy = sortedProxies[proxyIndex];
+        rowChildren.add(
           Expanded(
             child: ProxyCard(
               key: ValueKey('${group.name}.${proxy.name}'),
@@ -176,25 +220,31 @@ class _ProxyGroupsListState extends ConsumerState<_ProxyGroupsList> {
           ),
         );
       } else {
-        cardWidgets.add(const Expanded(child: SizedBox()));
+        rowChildren.add(const Expanded(child: SizedBox()));
       }
     }
 
-    final rowChildren = <Widget>[];
-    for (var i = 0; i < cardWidgets.length; i++) {
-      rowChildren.add(cardWidgets[i]);
-      if (i < cardWidgets.length - 1) {
-        rowChildren.add(const SizedBox(width: 8));
-      }
-    }
+    final rowWidget = Row(children: rowChildren);
+    final Widget content = switch (group.name == _expandingGroup) {
+      true => () {
+        final animation = _expandController.drive(
+          _rowFadeTweens[math.min(rowIndex, 6)],
+        );
+        return FadeTransition(
+          opacity: animation,
+          child: SlideTransition(
+            position: animation.drive(_expandSlide),
+            child: rowWidget,
+          ),
+        );
+      }(),
+      false => rowWidget,
+    };
 
     return Padding(
       key: ValueKey('row_${group.name}_$rowIndex'),
       padding: const EdgeInsets.only(bottom: 8),
-      child: SizedBox(
-        height: itemHeight,
-        child: Row(children: rowChildren),
-      ),
+      child: SizedBox(height: itemHeight, child: content),
     );
   }
 
@@ -205,40 +255,68 @@ class _ProxyGroupsListState extends ConsumerState<_ProxyGroupsList> {
     bool autoStickyHeader,
   ) {
     final isExpand = widget.currentUnfoldSet.contains(group.name);
-    final sortedProxies = isExpand
-        ? _getGroupSortedProxies(group)
-        : const <Proxy>[];
+    final cacheKey = (
+      isExpand,
+      group.name == _expandingGroup,
+      headerHeight,
+      itemHeight,
+      autoStickyHeader,
+    );
+    final cached = _sliverCache[group.name];
+    if (cached != null &&
+        identical(cached.$1, group) &&
+        cached.$2 == cacheKey) {
+      return cached.$3;
+    }
+    final sortedProxies = isExpand ? group.all : const <Proxy>[];
     final rowCount = (sortedProxies.length / widget.columns).ceil();
 
-    return SliverStickyHeader(
-      key: ValueKey('group_${group.name}'),
-      pinned: autoStickyHeader,
-      spacing: 8,
-      header: SizedBox(
-        height: headerHeight,
-        child: _GroupHeader(
-          key: ValueKey('header_${group.name}'),
-          group: group,
-          isExpand: isExpand,
-          onToggle: () => _handleToggle(group.name),
-          cardType: widget.cardType,
-          columns: widget.columns,
-          onScrollToSelected: () => _scrollToSelected(group.name),
+    final sliver = SliverPadding(
+      padding: const EdgeInsets.only(left: 16, right: 16, bottom: 0),
+      sliver: SliverStickyHeader(
+        key: ValueKey('group_${group.name}'),
+        pinned: autoStickyHeader,
+        spacing: 8,
+        pinnedInset: _pinnedInset,
+        headerRadius: 16,
+        pinnedShadow: BoxShadow(
+          color: Colors.black.withValues(
+            alpha: context.colorScheme.brightness == Brightness.light
+                ? 0.10
+                : 0.32,
+          ),
+          blurRadius: 14,
+          offset: const Offset(0, 4),
         ),
-      ),
-      sliver: SliverFixedExtentList(
-        itemExtent: itemHeight + 8,
-        delegate: SliverChildBuilderDelegate(
-          (context, rowIndex) =>
-              _buildRow(group, sortedProxies, rowIndex, itemHeight),
-          childCount: rowCount,
+        header: SizedBox(
+          height: headerHeight,
+          child: _GroupHeader(
+            key: ValueKey('header_${group.name}'),
+            group: group,
+            isExpand: isExpand,
+            onToggle: () => _handleToggle(group.name),
+            cardType: widget.cardType,
+            columns: widget.columns,
+            onScrollToSelected: () => _scrollToSelected(group.name),
+          ),
+        ),
+        sliver: SliverFixedExtentList(
+          itemExtent: itemHeight + 8,
+          delegate: SliverChildBuilderDelegate(
+            (context, rowIndex) =>
+                _buildRow(group, sortedProxies, rowIndex, itemHeight),
+            childCount: rowCount,
+          ),
         ),
       ),
     );
+    _sliverCache[group.name] = (group, cacheKey, sliver);
+    return sliver;
   }
 
   @override
   void dispose() {
+    _expandController.dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -252,40 +330,37 @@ class _ProxyGroupsListState extends ConsumerState<_ProxyGroupsList> {
     final itemHeight = getItemHeight(widget.cardType);
     final headerHeight = _getHeaderHeight();
 
-    return CommonScrollBar(
-      controller: _scrollController,
-      child: CustomScrollView(
-        key: const PageStorageKey<String>('proxies_list'),
-        controller: _scrollController,
-        scrollCacheExtent: isMobileView
-            ? const ScrollCacheExtent.pixels(120.0)
-            : const ScrollCacheExtent.pixels(250.0),
-        clipBehavior: Clip.hardEdge,
-        slivers: [
-          const SliverToBoxAdapter(
-            child: SizedBox(height: 16),
-          ),
-          for (final group in widget.groups)
-            SliverPadding(
-              padding: const EdgeInsets.only(left: 16, right: 16, bottom: 8),
-              sliver: _buildGroupSliver(
-                group,
-                headerHeight,
-                itemHeight,
-                autoStickyHeader,
+    return ScrollEdgeRise(
+      builder: (context, rise) {
+        _rise = rise;
+        return CommonScrollBar(
+          controller: _scrollController,
+          child: CustomScrollView(
+            key: const PageStorageKey<String>('proxies_list'),
+            controller: _scrollController,
+            clipBehavior: Clip.hardEdge,
+            slivers: [
+              SliverToBoxAdapter(child: SizedBox(height: 16 + rise)),
+              for (final group in widget.groups)
+                _buildGroupSliver(
+                  group,
+                  headerHeight,
+                  itemHeight,
+                  autoStickyHeader,
+                ),
+              SliverPadding(
+                padding: EdgeInsets.only(
+                  bottom:
+                      (globalState.isAndroidTV ? 48.0 : 16.0) +
+                      (isMobileView
+                          ? getFloatingBottomBarReserveHeight(context)
+                          : 0),
+                ),
               ),
-            ),
-          SliverPadding(
-            padding: EdgeInsets.only(
-              bottom:
-                  (globalState.isAndroidTV ? 48.0 : 16.0) +
-                  (isMobileView
-                      ? getFloatingBottomBarReserveHeight(context)
-                      : 0),
-            ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
@@ -318,11 +393,37 @@ class _GroupHeader extends ConsumerWidget {
         .watch(getSelectedProxyNameProvider(group.name))
         .getSafeValue('');
 
-    final selectedProxyIcon = ref.watch(
-      proxyIconProvider(selectedProxyName),
+    final selectedProxyIcon = ref.watch(proxyIconProvider(selectedProxyName));
+
+    final showFilled = iconStyle == ProxiesIconStyle.none;
+    final expandIcon = CommonExpandIcon(
+      expand: isExpand,
+      duration: const Duration(milliseconds: 320),
     );
+    final primaryColor = context.colorScheme.primary;
+    final expandButtonStyle = ButtonStyle(
+      backgroundColor: WidgetStateProperty.resolveWith((states) {
+        if (states.contains(WidgetState.focused)) {
+          return primaryColor.withValues(alpha: 0.2);
+        }
+        return null;
+      }),
+    );
+    void handleToggle() {
+      if (system.isAndroid &&
+          ref.read(
+            appSettingProvider.select((s) => s.enableNavBarHapticFeedback),
+          )) {
+        HapticFeedback.selectionClick();
+      }
+      onToggle();
+    }
+
+    final textTheme = context.textTheme;
+    final labelLightStyle = textTheme.labelMedium?.toLight;
 
     return CommonCard(
+      elevated: false,
       radius: 16,
       type: CommonCardType.filled,
       onPressed: onToggle,
@@ -338,22 +439,16 @@ class _GroupHeader extends ConsumerWidget {
                 children: [
                   EmojiText(
                     group.name,
-                    style: context.textTheme.titleMedium,
+                    style: textTheme.titleMedium,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
                   const SizedBox(height: 4),
                   Row(
                     children: [
-                      Text(
-                        group.type.name,
-                        style: context.textTheme.labelMedium?.toLight,
-                      ),
+                      Text(group.type.name, style: labelLightStyle),
                       if (selectedProxyName.isNotEmpty) ...[
-                        Text(
-                          '  •  ',
-                          style: context.textTheme.labelMedium?.toLight,
-                        ),
+                        Text('  •  ', style: labelLightStyle),
                         if (selectedProxyIcon.isNotEmpty) ...[
                           CommonTargetIcon(
                             src: selectedProxyIcon,
@@ -364,7 +459,7 @@ class _GroupHeader extends ConsumerWidget {
                         Flexible(
                           child: EmojiText(
                             selectedProxyName,
-                            style: context.textTheme.labelMedium?.toLight,
+                            style: labelLightStyle,
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
@@ -374,19 +469,21 @@ class _GroupHeader extends ConsumerWidget {
                 ],
               ),
             ),
-            _ExpandableGroupActions(
-              isExpand: isExpand,
-              child: Row(
+            if (isExpand)
+              Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   const SizedBox(width: 4),
-                  SizedBox.square(
-                    dimension: 40,
-                    child: IconButton(
-                      visualDensity: VisualDensity.compact,
-                      icon: const Icon(Icons.adjust),
-                      onPressed: onScrollToSelected,
-                      tooltip: appLocalizations.locate,
+                  _PressScaleWrapper(
+                    child: SizedBox.square(
+                      dimension: 36,
+                      child: IconButton(
+                        padding: EdgeInsets.zero,
+                        visualDensity: VisualDensity.compact,
+                        icon: const Icon(Icons.adjust),
+                        onPressed: onScrollToSelected,
+                        tooltip: appLocalizations.locate,
+                      ),
                     ),
                   ),
                   AnimatedBuilder(
@@ -394,23 +491,29 @@ class _GroupHeader extends ConsumerWidget {
                     builder: (_, _) {
                       final isTestingThisGroup = delayTestCoordinator
                           .isTestingGroup(group.name);
-                      return SizedBox(
-                        width: 48,
-                        height: 40,
-                        child: IconButton(
-                          visualDensity: VisualDensity.compact,
-                          icon: isTestingThisGroup
-                              ? const SizedBox.square(
-                                  dimension: 18,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Icon(Icons.network_ping),
-                          onPressed: delayTestCoordinator.isTesting
-                              ? null
-                              : () => _delayTest(context),
-                          tooltip: appLocalizations.startTest,
+                      return _PressScaleWrapper(
+                        enabled: !delayTestCoordinator.isTesting,
+                        child: SizedBox(
+                          width: 44,
+                          height: 36,
+                          child: IconButton(
+                            padding: EdgeInsets.zero,
+                            visualDensity: VisualDensity.compact,
+                            icon: isTestingThisGroup
+                                ? const RepaintBoundary(
+                                    child: SizedBox.square(
+                                      dimension: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    ),
+                                  )
+                                : const Icon(Icons.network_ping),
+                            onPressed: delayTestCoordinator.isTesting
+                                ? null
+                                : () => _delayTest(context),
+                            tooltip: appLocalizations.startTest,
+                          ),
                         ),
                       );
                     },
@@ -418,21 +521,24 @@ class _GroupHeader extends ConsumerWidget {
                   const SizedBox(width: 8),
                 ],
               ),
-            ),
-            SizedBox.square(
-              dimension: 40,
-              child: IconButton.filledTonal(
-                visualDensity: VisualDensity.compact,
-                icon: CommonExpandIcon(expand: isExpand),
-                onPressed: onToggle,
-                style: ButtonStyle(
-                  backgroundColor: WidgetStateProperty.resolveWith((states) {
-                    if (states.contains(WidgetState.focused)) {
-                      return context.colorScheme.primary.withValues(alpha: 0.2);
-                    }
-                    return null;
-                  }),
-                ),
+            _PressScaleWrapper(
+              child: SizedBox.square(
+                dimension: 36,
+                child: showFilled
+                    ? IconButton.filledTonal(
+                        padding: EdgeInsets.zero,
+                        visualDensity: VisualDensity.compact,
+                        icon: expandIcon,
+                        onPressed: handleToggle,
+                        style: expandButtonStyle,
+                      )
+                    : IconButton(
+                        padding: EdgeInsets.zero,
+                        visualDensity: VisualDensity.compact,
+                        icon: expandIcon,
+                        onPressed: handleToggle,
+                        style: expandButtonStyle,
+                      ),
               ),
             ),
           ],
@@ -473,35 +579,42 @@ class _GroupHeader extends ConsumerWidget {
   }
 }
 
-class _ExpandableGroupActions extends StatelessWidget {
-  final bool isExpand;
+class _PressScaleWrapper extends StatefulWidget {
   final Widget child;
+  final bool enabled;
 
-  const _ExpandableGroupActions({
-    required this.isExpand,
-    required this.child,
-  });
+  const _PressScaleWrapper({required this.child, this.enabled = true});
+
+  @override
+  State<_PressScaleWrapper> createState() => _PressScaleWrapperState();
+}
+
+class _PressScaleWrapperState extends State<_PressScaleWrapper> {
+  bool _isPressed = false;
 
   @override
   Widget build(BuildContext context) {
-    return ClipRect(
-      child: AnimatedAlign(
-        duration: const Duration(milliseconds: 200),
-        curve: Curves.fastOutSlowIn,
-        alignment: Alignment.centerRight,
-        widthFactor: isExpand ? 1.0 : 0.0,
-        child: AnimatedOpacity(
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.fastOutSlowIn,
-          opacity: isExpand ? 1.0 : 0.0,
-          child: IgnorePointer(
-            ignoring: !isExpand,
-            child: SizedBox(
-              width: 100,
-              child: child,
-            ),
-          ),
-        ),
+    final scale = (widget.enabled && _isPressed) ? 0.92 : 1.0;
+    return Listener(
+      onPointerDown: (_) {
+        if (!widget.enabled) return;
+        setState(() => _isPressed = true);
+      },
+      onPointerUp: (_) {
+        if (_isPressed) {
+          setState(() => _isPressed = false);
+        }
+      },
+      onPointerCancel: (_) {
+        if (_isPressed) {
+          setState(() => _isPressed = false);
+        }
+      },
+      child: AnimatedScale(
+        scale: scale,
+        duration: const Duration(milliseconds: 100),
+        curve: Curves.easeOutCubic,
+        child: widget.child,
       ),
     );
   }

@@ -6,7 +6,7 @@ import 'package:bett_box/common/common.dart';
 import 'package:bett_box/enum/enum.dart';
 import 'package:bett_box/models/models.dart';
 import 'package:bett_box/state.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 const appName = AppIdentity.displayName;
 const appHelperService = WindowsHelperIdentity.serviceName;
@@ -42,7 +42,6 @@ const clashConfigKey = 'clash_config';
 const configKey = 'config';
 const customSidebarIconKey = 'custom_sidebar_icon';
 const customDashboardTitleKey = 'custom_dashboard_title';
-const sidebarCollapsedKey = 'sidebar_collapsed';
 const double dialogCommonWidth = 300;
 const repository = 'appshubcc/Bettbox';
 const ipInfoToken = String.fromEnvironment('IPINFO_TOKEN', defaultValue: '');
@@ -50,10 +49,9 @@ const defaultExternalController = '127.0.0.1:9090';
 const maxMobileWidth = 600;
 const maxLaptopWidth = 840;
 double getFloatingBottomBarReserveHeight(BuildContext context) {
-  final mediaQuery = MediaQuery.of(context);
   final viewBottom = max(
-    mediaQuery.viewPadding.bottom,
-    mediaQuery.padding.bottom,
+    MediaQuery.viewPaddingOf(context).bottom,
+    MediaQuery.paddingOf(context).bottom,
   );
   if (globalState.isAndroidTV) {
     return 132.0 + (viewBottom > 12 ? viewBottom - 12 : 0);
@@ -62,10 +60,9 @@ double getFloatingBottomBarReserveHeight(BuildContext context) {
 }
 
 double getFloatingBottomBarFABReserveHeight(BuildContext context) {
-  final mediaQuery = MediaQuery.of(context);
   final viewBottom = max(
-    mediaQuery.viewPadding.bottom,
-    mediaQuery.padding.bottom,
+    MediaQuery.viewPaddingOf(context).bottom,
+    MediaQuery.paddingOf(context).bottom,
   );
   return 84.0 - min(viewBottom, 12.0);
 }
@@ -129,11 +126,7 @@ const profilesStoreKey = PageStorageKey<String>('profiles');
 
 const defaultPrimaryColor = 0xFF00897B;
 
-double getWidgetHeight(num lines) {
-  return max(lines * 84 + (lines - 1) * 16, 0).ap;
-}
-
-const maxLength = 256;
+const maxLength = 512;
 const maxLogLength = 512;
 
 final mainIsolate = 'BettboxMainIsolate';
@@ -141,6 +134,20 @@ final mainIsolate = 'BettboxMainIsolate';
 final serviceIsolate = 'BettboxServiceIsolate';
 
 const defaultPrimaryColors = [
+  0xFF1E293B,
+  0xFF1976D2,
+  defaultPrimaryColor,
+  0xFFE91E63,
+  0xFF7B1FA2,
+  0xFFD97706,
+  0xFF4F46E5,
+  0xFF008FB6,
+  0xFF388E3C,
+  0xFF827717,
+  0xFF795548,
+];
+
+const legacyPrimaryColors = [
   0xFF1E293B,
   0xFF1976D2,
   defaultPrimaryColor,

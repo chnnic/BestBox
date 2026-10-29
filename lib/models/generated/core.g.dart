@@ -10,6 +10,10 @@ _SetupParams _$SetupParamsFromJson(Map<String, dynamic> json) => _SetupParams(
   selectedMap: Map<String, String>.from(json['selected-map'] as Map),
   testUrl: json['test-url'] as String,
   overrideTestUrl: json['override-test-url'] as bool? ?? true,
+  profilePath: json['profile-path'] as String? ?? '',
+  ageSecretKey: json['age-secret-key'] as String? ?? '',
+  scriptedConfig: json['scripted-config'] as String? ?? '',
+  patch: json['patch'] as Map<String, dynamic>?,
 );
 
 Map<String, dynamic> _$SetupParamsToJson(_SetupParams instance) =>
@@ -17,7 +21,19 @@ Map<String, dynamic> _$SetupParamsToJson(_SetupParams instance) =>
       'selected-map': instance.selectedMap,
       'test-url': instance.testUrl,
       'override-test-url': instance.overrideTestUrl,
+      'profile-path': instance.profilePath,
+      'age-secret-key': instance.ageSecretKey,
+      'scripted-config': instance.scriptedConfig,
+      'patch': instance.patch,
     };
+
+_SetupResult _$SetupResultFromJson(Map<String, dynamic> json) => _SetupResult(
+  message: json['message'] as String? ?? '',
+  global: json['global'] as String? ?? '',
+);
+
+Map<String, dynamic> _$SetupResultToJson(_SetupResult instance) =>
+    <String, dynamic>{'message': instance.message, 'global': instance.global};
 
 _UpdateParams _$UpdateParamsFromJson(Map<String, dynamic> json) =>
     _UpdateParams(
@@ -193,6 +209,10 @@ const _$AppMessageTypeEnumMap = {
   AppMessageType.delay: 'delay',
   AppMessageType.request: 'request',
   AppMessageType.loaded: 'loaded',
+  AppMessageType.speedTest: 'speedTest',
+  AppMessageType.stunTest: 'stunTest',
+  AppMessageType.iperf: 'iperf',
+  AppMessageType.localPing: 'localPing',
 };
 
 _InvokeMessage _$InvokeMessageFromJson(Map<String, dynamic> json) =>
@@ -299,6 +319,8 @@ const _$ActionMethodEnumMap = {
   ActionMethod.validateConfig: 'validateConfig',
   ActionMethod.updateConfig: 'updateConfig',
   ActionMethod.getConfig: 'getConfig',
+  ActionMethod.getRuntimeConfig: 'getRuntimeConfig',
+  ActionMethod.exportConfig: 'exportConfig',
   ActionMethod.getProxies: 'getProxies',
   ActionMethod.changeProxy: 'changeProxy',
   ActionMethod.getTraffic: 'getTraffic',
@@ -336,6 +358,26 @@ const _$ActionMethodEnumMap = {
   ActionMethod.getMode: 'getMode',
   ActionMethod.parseExternalProviderContent: 'parseExternalProviderContent',
   ActionMethod.getCoreStatus: 'getCoreStatus',
+  ActionMethod.startSpeedTest: 'startSpeedTest',
+  ActionMethod.cancelSpeedTest: 'cancelSpeedTest',
+  ActionMethod.probeSpeedTest: 'probeSpeedTest',
+  ActionMethod.getSpeedTestServers: 'getSpeedTestServers',
+  ActionMethod.startStunTest: 'startStunTest',
+  ActionMethod.cancelStunTest: 'cancelStunTest',
+  ActionMethod.routeTrace: 'routeTrace',
+  ActionMethod.dnsQuery: 'dnsQuery',
+  ActionMethod.mrsPrepare: 'mrsPrepare',
+  ActionMethod.mrsLookup: 'mrsLookup',
+  ActionMethod.cancelMrsLookup: 'cancelMrsLookup',
+  ActionMethod.startToolProxy: 'startToolProxy',
+  ActionMethod.stopToolProxy: 'stopToolProxy',
+  ActionMethod.ageCrypt: 'ageCrypt',
+  ActionMethod.startIperfServer: 'startIperfServer',
+  ActionMethod.stopIperfServer: 'stopIperfServer',
+  ActionMethod.startIperfClient: 'startIperfClient',
+  ActionMethod.cancelIperfClient: 'cancelIperfClient',
+  ActionMethod.startLocalPing: 'startLocalPing',
+  ActionMethod.cancelLocalPing: 'cancelLocalPing',
   ActionMethod.setState: 'setState',
   ActionMethod.startTun: 'startTun',
   ActionMethod.stopTun: 'stopTun',

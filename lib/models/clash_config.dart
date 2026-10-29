@@ -290,6 +290,7 @@ abstract class Tun with _$Tun {
     @JsonKey(name: 'congestion-controller')
     @Default(CongestionController.bbr3)
     CongestionController congestionController,
+    @JsonKey(name: 'dns-mode') TunDnsMode? dnsMode,
     @JsonKey(name: 'dns-hijack') @Default(['any:53']) List<String> dnsHijack,
     @JsonKey(name: 'route-address') @Default([]) List<String> routeAddress,
     @JsonKey(name: 'route-exclude-address')
@@ -417,7 +418,7 @@ abstract class Dns with _$Dns {
     Map<String, String> nameserverPolicy,
     @Default(['1.1.1.1']) List<String> nameserver,
     @Default([]) List<String> fallback,
-    @Default(['https://120.53.53.53/dns-query#DIRECT'])
+    @Default(['tls://223.6.6.6#DIRECT', 'https://doh.pub/dns-query#DIRECT'])
     @JsonKey(name: 'proxy-server-nameserver')
     List<String> proxyServerNameserver,
     @Default([])
@@ -675,11 +676,15 @@ List<Rule> _genRule(List<dynamic>? rules) {
 }
 
 List<RuleProvider> _genRuleProviders(Map json) {
-  return json.entries.map((entry) => RuleProvider(name: entry.key.toString())).toList();
+  return json.entries
+      .map((entry) => RuleProvider(name: entry.key.toString()))
+      .toList();
 }
 
 List<SubRule> _genSubRules(Map json) {
-  return json.entries.map((entry) => SubRule(name: entry.key.toString())).toList();
+  return json.entries
+      .map((entry) => SubRule(name: entry.key.toString()))
+      .toList();
 }
 
 @freezed
@@ -697,6 +702,16 @@ abstract class ClashConfigSnippet with _$ClashConfigSnippet {
 
   factory ClashConfigSnippet.fromJson(Map<String, Object?> json) =>
       _$ClashConfigSnippetFromJson(json);
+}
+
+extension ClashConfigExt on ClashConfig {
+  String get listenPorts => {
+    mixedPort,
+    port,
+    socksPort,
+    redirPort,
+    tproxyPort,
+  }.where((port) => port > 0).join('/');
 }
 
 @freezed
