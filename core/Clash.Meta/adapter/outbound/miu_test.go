@@ -59,6 +59,18 @@ func TestMiuOption(t *testing.T) {
 	}
 	_ = m.Close()
 
+	padding := base()
+	padding["padding-scheme"] = []any{"stop=2", "0=30-30", "1=128-160"}
+	m, err = parse(padding)
+	if err != nil {
+		t.Fatalf("padding-scheme: %v", err)
+	}
+	_ = m.Close()
+	padding["padding-scheme"] = []any{"0=30-30"}
+	if _, err := parse(padding); err == nil {
+		t.Fatal("a padding-scheme without stop was accepted")
+	}
+
 	short := base()
 	short["psk"] = "short"
 	if _, err := parse(short); err == nil {

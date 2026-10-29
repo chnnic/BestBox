@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/metacubex/mihomo/common/once"
@@ -31,6 +32,7 @@ type MiuOption struct {
 	Server             string         `proxy:"server"`
 	Port               int            `proxy:"port"`
 	PSK                string         `proxy:"psk"`
+	PaddingScheme      []string       `proxy:"padding-scheme,omitempty"` // overrides the PSK-derived initial scheme
 	UDP                bool           `proxy:"udp,omitempty"`
 	TLS                bool           `proxy:"tls,omitempty"` // accepted for compatibility: Miu always runs over TLS
 	SNI                string         `proxy:"sni,omitempty"`
@@ -163,11 +165,12 @@ func NewMiu(option MiuOption) (*Miu, error) {
 	}
 
 	outbound.client, err = miu.NewClient(miu.ClientConfig{
-		PSK:        option.PSK,
-		Dial:       outbound.dialLane,
-		LaneIdle:   time.Duration(option.IdleSessionTimeout) * time.Second,
-		MinIdle:    option.MinIdleSession,
-		DisableRaw: !miuRawUsable(),
+		PSK:           option.PSK,
+		PaddingScheme: strings.Join(option.PaddingScheme, "\n"),
+		Dial:          outbound.dialLane,
+		LaneIdle:      time.Duration(option.IdleSessionTimeout) * time.Second,
+		MinIdle:       option.MinIdleSession,
+		DisableRaw:    !miuRawUsable(),
 	})
 	if err != nil {
 		return nil, err
