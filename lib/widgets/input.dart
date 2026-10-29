@@ -1,15 +1,18 @@
+import 'dart:async';
+
 import 'package:bett_box/common/common.dart';
 import 'package:bett_box/models/common.dart';
 import 'package:bett_box/state.dart';
 import 'package:bett_box/widgets/dialog.dart';
 import 'package:bett_box/widgets/null_status.dart';
 import 'package:bett_box/widgets/text.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import 'card.dart';
 import 'effect.dart';
 import 'float_layout.dart';
 import 'list.dart';
+import 'scaffold.dart';
 
 class OptionsDialog<T> extends StatelessWidget {
   final String title;
@@ -29,58 +32,102 @@ class OptionsDialog<T> extends StatelessWidget {
   Widget build(BuildContext context) {
     return CommonDialog(
       title: title,
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 16),
+      padding: const EdgeInsets.fromLTRB(10, 12, 10, 14),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           for (final option in options)
-            Material(
-              color: Colors.transparent,
-              child: InkWell(
-                onTap: () {
-                  Navigator.of(context).pop(option);
-                },
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 12,
-                  ),
-                  child: Row(
+            OptionItem(
+              text: textBuilder(option),
+              selected: value == option,
+              onTap: () {
+                Navigator.of(context).pop(option);
+              },
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class OptionItem extends StatelessWidget {
+  final String text;
+  final String? subtitle;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const OptionItem({
+    super.key,
+    required this.text,
+    this.subtitle,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = context.colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Material(
+        color: selected ? colorScheme.secondaryContainer : Colors.transparent,
+        shape: const RoundedSuperellipseBorder(
+          borderRadius: BorderRadius.all(Radius.circular(14)),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          focusColor: colorScheme.primary.withValues(alpha: 0.18),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            child: Row(
+              children: [
+                Icon(
+                  selected ? Icons.check_circle_rounded : Icons.circle_outlined,
+                  size: 21,
+                  color: selected
+                      ? colorScheme.primary
+                      : colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Icon(
-                        value == option
-                            ? Icons.check_circle_rounded
-                            : Icons.circle_outlined,
-                        size: 21,
-                        color: value == option
-                            ? context.colorScheme.primary
-                            : context.colorScheme.onSurfaceVariant.withValues(
-                                alpha: 0.6,
-                              ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: value == option
-                            ? SingleChildScrollView(
-                                scrollDirection: Axis.horizontal,
-                                child: EmojiText(
-                                  textBuilder(option),
-                                  style: context.textTheme.bodyMedium,
-                                ),
-                              )
-                            : EmojiText(
-                                textBuilder(option),
-                                style: context.textTheme.bodyMedium,
-                                overflow: TextOverflow.ellipsis,
-                                maxLines: 1,
-                              ),
-                      ),
+                      if (selected)
+                        SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: EmojiText(
+                            text,
+                            style: context.textTheme.bodyMedium?.copyWith(
+                              color: colorScheme.onSecondaryContainer,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        )
+                      else
+                        EmojiText(
+                          text,
+                          style: context.textTheme.bodyMedium,
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
+                        ),
+                      if (subtitle case final subtitle?)
+                        Text(
+                          subtitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: context.textTheme.bodySmall?.copyWith(
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                        ),
                     ],
                   ),
                 ),
-              ),
+              ],
             ),
-        ],
+          ),
+        ),
       ),
     );
   }
@@ -150,6 +197,7 @@ class _InputDialogState extends State<InputDialog> {
   final _formKey = GlobalKey<FormState>();
 
   late TextEditingController textController;
+  late bool _obscure = widget.obscureText ?? false;
   FocusNode? _focusNode;
 
   String get value => widget.value;
@@ -162,15 +210,9 @@ class _InputDialogState extends State<InputDialog> {
   void initState() {
     super.initState();
     textController = TextEditingController(text: value);
-    if (widget.delayedFocus) {
-      _focusNode = FocusNode();
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        Future.delayed(const Duration(milliseconds: 500), () {
-          if (mounted) {
-            _focusNode?.requestFocus();
-          }
-        });
-      });
+    if (widget.autofocus || widget.delayedFocus) {
+      final focusNode = _focusNode = FocusNode();
+      unawaited(focusNode.requestFocusWhenIdle());
     }
   }
 
@@ -222,10 +264,10 @@ class _InputDialogState extends State<InputDialog> {
           runSpacing: 16,
           children: [
             TextFormField(
-              autofocus: widget.autofocus && !widget.delayedFocus,
               focusNode: _focusNode,
-              obscureText: widget.obscureText ?? false,
-              keyboardType: widget.keyboardType ??
+              obscureText: _obscure,
+              keyboardType:
+                  widget.keyboardType ??
                   (widget.obscureText == true
                       ? TextInputType.visiblePassword
                       : TextInputType.text),
@@ -241,6 +283,18 @@ class _InputDialogState extends State<InputDialog> {
                 suffixText: suffixText,
                 hintText: widget.hintText,
                 labelText: widget.labelText,
+                suffixIcon: widget.obscureText == true
+                    ? IconButton(
+                        icon: Icon(
+                          _obscure ? Icons.visibility : Icons.visibility_off,
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            _obscure = !_obscure;
+                          });
+                        },
+                      )
+                    : null,
               ),
               validator: widget.validator,
             ),
@@ -328,51 +382,55 @@ class ListInputPage extends StatelessWidget {
       ),
       child: items.isEmpty
           ? NullStatus(label: appLocalizations.noData)
-          : ReorderableListView.builder(
-              padding: EdgeInsets.only(
-                bottom: 16 + 64 + MediaQuery.viewPaddingOf(context).bottom,
-              ),
-              buildDefaultDragHandles: false,
-              itemCount: items.length,
-              itemBuilder: (context, index) {
-                final e = items[index];
-                return _InputItem(
-                  key: ValueKey(e),
-                  ReorderableDelayedDragStartListener(
-                    index: index,
-                    child: CommonCard(
-                      child: ListItem(
-                        leading: leadingBuilder != null
-                            ? leadingBuilder!(e)
-                            : null,
-                        title: titleBuilder(e),
-                        subtitle: subtitleBuilder != null
-                            ? subtitleBuilder!(e)
-                            : null,
-                        trailing: IconButton(
-                          icon: const Icon(Icons.delete_outline),
-                          onPressed: () {
-                            _handleDelete(e);
-                          },
+          : ScrollEdgeRise(
+              builder: (_, rise) => ReorderableListView.builder(
+                padding: EdgeInsets.only(
+                  top: rise,
+                  bottom: 16 + 64 + MediaQuery.viewPaddingOf(context).bottom,
+                ),
+                buildDefaultDragHandles: false,
+                itemCount: items.length,
+                itemBuilder: (context, index) {
+                  final e = items[index];
+                  return _InputItem(
+                    key: ValueKey(e),
+                    ReorderableDelayedDragStartListener(
+                      index: index,
+                      child: CommonCard(
+                        elevated: false,
+                        child: ListItem(
+                          leading: leadingBuilder != null
+                              ? leadingBuilder!(e)
+                              : null,
+                          title: titleBuilder(e),
+                          subtitle: subtitleBuilder != null
+                              ? subtitleBuilder!(e)
+                              : null,
+                          trailing: IconButton(
+                            icon: const Icon(Icons.delete_outline),
+                            onPressed: () {
+                              _handleDelete(e);
+                            },
+                          ),
                         ),
+                        onPressed: () {
+                          _handleAddOrEdit(e);
+                        },
                       ),
-                      onPressed: () {
-                        _handleAddOrEdit(e);
-                      },
                     ),
-                  ),
-                );
-              },
-              // ignore: deprecated_member_use
-              onReorder: (oldIndex, newIndex) {
-                if (oldIndex < newIndex) {
-                  newIndex -= 1;
-                }
-                final nextItems = List<String>.from(items);
-                final item = nextItems.removeAt(oldIndex);
-                nextItems.insert(newIndex, item);
-                onChange(nextItems);
-              },
+                  );
+                },
+                // ignore: deprecated_member_use
+                onReorder: (oldIndex, newIndex) {
+                  if (oldIndex < newIndex) {
+                    newIndex -= 1;
+                  }
+                  final nextItems = List<String>.from(items);
+                  final item = nextItems.removeAt(oldIndex);
+                  nextItems.insert(newIndex, item);
+                  onChange(nextItems);
+                },
+              ),
             ),
     );
   }
@@ -473,54 +531,58 @@ class MapInputPage extends StatelessWidget {
       ),
       child: items.isEmpty
           ? NullStatus(label: appLocalizations.noData)
-          : ReorderableListView.builder(
-              padding: EdgeInsets.only(
-                bottom: 16 + 64 + MediaQuery.viewPaddingOf(context).bottom,
-              ),
-              proxyDecorator: proxyDecorator,
-              buildDefaultDragHandles: false,
-              itemCount: items.length,
-              itemBuilder: (_, index) {
-                final e = items[index];
-                return _InputItem(
-                  key: ValueKey(e.key),
-                  ReorderableDelayedDragStartListener(
-                    index: index,
-                    child: CommonCard(
-                      child: ListItem(
-                        leading: leadingBuilder != null
-                            ? leadingBuilder!(e)
-                            : null,
-                        title: titleBuilder(e),
-                        subtitle: subtitleBuilder != null
-                            ? subtitleBuilder!(e)
-                            : null,
-                        trailing: (canDelete == null || canDelete!(e))
-                            ? IconButton(
-                                icon: const Icon(Icons.delete_outline),
-                                onPressed: () {
-                                  _handleDelete(e);
-                                },
-                              )
-                            : null,
+          : ScrollEdgeRise(
+              builder: (_, rise) => ReorderableListView.builder(
+                padding: EdgeInsets.only(
+                  top: rise,
+                  bottom: 16 + 64 + MediaQuery.viewPaddingOf(context).bottom,
+                ),
+                proxyDecorator: proxyDecorator,
+                buildDefaultDragHandles: false,
+                itemCount: items.length,
+                itemBuilder: (_, index) {
+                  final e = items[index];
+                  return _InputItem(
+                    key: ValueKey(e.key),
+                    ReorderableDelayedDragStartListener(
+                      index: index,
+                      child: CommonCard(
+                        elevated: false,
+                        child: ListItem(
+                          leading: leadingBuilder != null
+                              ? leadingBuilder!(e)
+                              : null,
+                          title: titleBuilder(e),
+                          subtitle: subtitleBuilder != null
+                              ? subtitleBuilder!(e)
+                              : null,
+                          trailing: (canDelete == null || canDelete!(e))
+                              ? IconButton(
+                                  icon: const Icon(Icons.delete_outline),
+                                  onPressed: () {
+                                    _handleDelete(e);
+                                  },
+                                )
+                              : null,
+                        ),
+                        onPressed: () {
+                          _handleAddOrEdit(e);
+                        },
                       ),
-                      onPressed: () {
-                        _handleAddOrEdit(e);
-                      },
                     ),
-                  ),
-                );
-              },
-              // ignore: deprecated_member_use
-              onReorder: (oldIndex, newIndex) {
-                if (oldIndex < newIndex) {
-                  newIndex -= 1;
-                }
-                final nextItems = List<MapEntry<String, String>>.from(items);
-                final item = nextItems.removeAt(oldIndex);
-                nextItems.insert(newIndex, item);
-                onChange(Map.fromEntries(nextItems));
-              },
+                  );
+                },
+                // ignore: deprecated_member_use
+                onReorder: (oldIndex, newIndex) {
+                  if (oldIndex < newIndex) {
+                    newIndex -= 1;
+                  }
+                  final nextItems = List<MapEntry<String, String>>.from(items);
+                  final item = nextItems.removeAt(oldIndex);
+                  nextItems.insert(newIndex, item);
+                  onChange(Map.fromEntries(nextItems));
+                },
+              ),
             ),
     );
   }

@@ -83,7 +83,8 @@ double getItemHeight(ProxyCardType proxyCardType) {
   final baseHeight =
       16 + measure.bodyMediumHeight * 2 + measure.bodySmallHeight + 8 + 4;
   return switch (proxyCardType) {
-    ProxyCardType.expand => baseHeight - measure.bodySmallHeight + measure.labelSmallHeight * 2 + 4,
+    ProxyCardType.expand =>
+      baseHeight - measure.bodySmallHeight + measure.labelSmallHeight * 2 + 4,
     ProxyCardType.shrink => baseHeight,
     ProxyCardType.min => baseHeight - measure.bodyMediumHeight,
   };
@@ -127,17 +128,6 @@ bool _isNonTestableProxy(Proxy proxy) {
       _isNonTestableProxyType(proxy.type);
 }
 
-String? _getProxyType(String proxyName) {
-  final groups = globalState.appController.getCurrentGroups();
-  for (final group in groups) {
-    if (group.name == proxyName) return group.type.name;
-    for (final proxy in group.all) {
-      if (proxy.name == proxyName) return proxy.type;
-    }
-  }
-  return null;
-}
-
 Future<void> delayTest(
   List<Proxy> proxies, {
   String? testUrl,
@@ -146,6 +136,7 @@ Future<void> delayTest(
 }) async {
   Future<void> runTest() async {
     final appController = globalState.appController;
+    final currentGroups = appController.getCurrentGroups();
     final targets = <DelayTestTarget>{};
     for (final proxy in proxies) {
       if (_isNonTestableProxy(proxy)) {
@@ -158,7 +149,8 @@ Future<void> delayTest(
       final name = state.proxyName;
       if (name.isEmpty ||
           _isNonTestableProxyName(name) ||
-          _isNonTestableProxyType(_getProxyType(name) ?? '')) {
+          (currentGroups.getGroup(name) == null &&
+              currentGroups.getRematchProxy(name) != null)) {
         continue;
       }
       targets.add(DelayTestTarget(name: name, url: url));
@@ -173,10 +165,27 @@ Future<void> delayTest(
       };
     }).toList();
 
-    // Execute tasks in batches
-    final batchedTasks = delayTasks.batch(concurrencyLimit);
-    for (final batchTasks in batchedTasks) {
-      await Future.wait(batchTasks.map((task) => task()));
+    if (concurrencyLimit <= 1 || delayTasks.length <= 1) {
+      for (final task in delayTasks) {
+        await task();
+      }
+    } else {
+      var nextIndex = 0;
+      final running = <Future<void>>{};
+      while (nextIndex < delayTasks.length || running.isNotEmpty) {
+        while (nextIndex < delayTasks.length &&
+            running.length < concurrencyLimit) {
+          final task = delayTasks[nextIndex++];
+          late final Future<void> future;
+          future = task().whenComplete(() {
+            running.remove(future);
+          });
+          running.add(future);
+        }
+        if (running.isNotEmpty) {
+          await Future.any(running);
+        }
+      }
     }
     appController.addSortNum();
   }

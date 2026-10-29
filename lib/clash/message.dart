@@ -14,13 +14,21 @@ class ClashMessage {
       for (final AppMessageListener listener in _listeners) {
         switch (m.type) {
           case AppMessageType.log:
-            listener.onLog(Log.fromJson(m.data));
+            listener.onLog(Log.core(m.data));
           case AppMessageType.delay:
             listener.onDelay(Delay.fromJson(m.data));
           case AppMessageType.request:
             listener.onRequest(TrackerInfo.fromJson(m.data));
           case AppMessageType.loaded:
             listener.onLoaded(m.data);
+          case AppMessageType.speedTest:
+            listener.onSpeedTest(SpeedTestState.fromJson(m.data));
+          case AppMessageType.stunTest:
+            listener.onStunTest(StunTestState.fromJson(m.data));
+          case AppMessageType.iperf:
+            listener.onIperf(IperfState.fromJson(m.data));
+          case AppMessageType.localPing:
+            listener.onLocalPing(LocalPingState.fromJson(m.data));
         }
       }
     });

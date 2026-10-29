@@ -176,6 +176,7 @@ _Tun _$TunFromJson(Map<String, dynamic> json) => _Tun(
         json['congestion-controller'],
       ) ??
       CongestionController.bbr3,
+  dnsMode: $enumDecodeNullable(_$TunDnsModeEnumMap, json['dns-mode']),
   dnsHijack:
       (json['dns-hijack'] as List<dynamic>?)
           ?.map((e) => e as String)
@@ -205,6 +206,7 @@ Map<String, dynamic> _$TunToJson(_Tun instance) => <String, dynamic>{
   'stack': _$TunStackEnumMap[instance.stack]!,
   'congestion-controller':
       _$CongestionControllerEnumMap[instance.congestionController]!,
+  'dns-mode': _$TunDnsModeEnumMap[instance.dnsMode],
   'dns-hijack': instance.dnsHijack,
   'route-address': instance.routeAddress,
   'route-exclude-address': instance.routeExcludeAddress,
@@ -227,6 +229,12 @@ const _$CongestionControllerEnumMap = {
   CongestionController.reno: 'reno',
   CongestionController.bbr: 'bbr',
   CongestionController.bbr3: 'bbr3',
+};
+
+const _$TunDnsModeEnumMap = {
+  TunDnsMode.disabled: 'disabled',
+  TunDnsMode.native: 'native',
+  TunDnsMode.hijack: 'hijack',
 };
 
 _FallbackFilter _$FallbackFilterFromJson(
@@ -308,7 +316,7 @@ _Dns _$DnsFromJson(Map<String, dynamic> json) => _Dns(
       (json['proxy-server-nameserver'] as List<dynamic>?)
           ?.map((e) => e as String)
           .toList() ??
-      const ['https://120.53.53.53/dns-query#DIRECT'],
+      const ['tls://223.6.6.6#DIRECT', 'https://doh.pub/dns-query#DIRECT'],
   directNameserver:
       (json['direct-nameserver'] as List<dynamic>?)
           ?.map((e) => e as String)
