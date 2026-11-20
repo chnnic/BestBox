@@ -9,6 +9,9 @@ import (
 	"net"
 	"sync"
 	"sync/atomic"
+	"time"
+
+	mrand "math/rand"
 )
 
 // lane is one authenticated connection: a TCP connection, the outer TLS on top of it, and one
@@ -30,7 +33,27 @@ type lane struct {
 	server  bool
 	client  *Client
 
-	wmu    sync.Mutex
+	wmu sync.Mutex
+	// prefix is written at the very start of the next write, in the same record: the client's
+	// authentication header and Settings on a lane dialed for a stream, the server's ServerSettings.
+	// prefixTimer writes it alone if nothing else is written in time. Guarded by wmu.
+	prefix      []byte
+	prefixTimer *time.Timer
+	// sent counts the packets written on the lane in its sending direction (writeLanePacket): only the
+	// lane's first ones are shaped, whatever stream they belong to. Guarded by wmu.
+	sent uint32
+	// idle is how long the server keeps this lane without a stream (server only; jittered per lane).
+	idle time.Duration
+	// Client only. unauthed: the authentication header is still in prefix (the lane has not been used
+	// yet); preauthTTL is how long such a lane may wait in the pool, below the server's handshake
+	// timeout; idleScale spreads the idle time of the used lane.
+	unauthed   atomic.Bool
+	preauthTTL time.Duration
+	idleScale  float64
+	// base is the scheme whose md5 is exchanged in Settings: the PSK-derived one or an explicit one. The
+	// lane shapes with scheme, which is its own draw from base's family when base is derived.
+	base *paddingScheme
+
 	scheme atomic.Pointer[paddingScheme]
 	closed atomic.Bool
 	done   chan struct{} // closed by close
@@ -247,22 +270,72 @@ func (l *lane) discardToEnd() error {
 
 // ---- writing ----
 
+// write writes p, preceded by the pending prefix if there is one. Caller holds wmu (or owns the lane).
 func (l *lane) write(p []byte) error {
+	if len(l.prefix) > 0 {
+		p = append(l.prefix[:len(l.prefix):len(l.prefix)], p...)
+		l.prefix = nil
+		if !l.server {
+			l.unauthed.Store(false)
+		}
+		if l.prefixTimer != nil {
+			l.prefixTimer.Stop()
+		}
+	}
 	_, err := l.conn.Write(p)
 	return err
+}
+
+// deferPrefix queues b to go out at the start of the next write; if nothing is written within wait, it
+// goes alone (padded like any small record).
+func (l *lane) deferPrefix(b []byte, wait time.Duration) {
+	l.wmu.Lock()
+	defer l.wmu.Unlock()
+	l.prefix = append(l.prefix, b...)
+	if l.prefixTimer == nil {
+		l.prefixTimer = time.AfterFunc(wait, l.flushPrefixLocked)
+	} else {
+		l.prefixTimer.Reset(wait)
+	}
+}
+
+func (l *lane) flushPrefixLocked() {
+	l.wmu.Lock()
+	defer l.wmu.Unlock()
+	if err := l.flushPrefix(); err != nil {
+		l.close()
+	}
+}
+
+// flushPrefix writes a pending prefix on its own. Caller holds wmu.
+func (l *lane) flushPrefix() error {
+	if len(l.prefix) == 0 || l.closed.Load() {
+		return nil
+	}
+	return l.write(l.padSmall(nil))
 }
 
 func (l *lane) writeFrame(typ byte, payload []byte) error {
 	l.wmu.Lock()
 	defer l.wmu.Unlock()
-	return l.write(appendFrame(make([]byte, 0, frameHead+len(payload)), typ, payload))
+	return l.write(l.padSmall(appendFrame(make([]byte, 0, frameHead+len(payload)), typ, payload)))
 }
 
-// writeUnshaped writes already encoded frames as they are.
+// writeUnshaped writes already encoded frames as they are, padded if they make a small record.
 func (l *lane) writeUnshaped(p []byte) error {
 	l.wmu.Lock()
 	defer l.wmu.Unlock()
-	return l.write(p)
+	return l.write(l.padSmall(p))
+}
+
+// writeLanePacket sends one "packet" (a few encoded frames) as the lane's next one. Packets are counted
+// per lane, not per stream: the shaping covers the start of the lane only. Shaping every stream the same
+// way would repeat the scheme's lengths at the start of every stream a lane carries, which is easy to see.
+func (l *lane) writeLanePacket(p []byte) error {
+	l.wmu.Lock()
+	defer l.wmu.Unlock()
+	l.sent++
+	return l.writePacketLocked(l.sent, p)
 }
 
 // writePacket sends one "packet" (a few encoded frames). While pkt is below the scheme's stop, the packet
@@ -271,6 +344,10 @@ func (l *lane) writeUnshaped(p []byte) error {
 func (l *lane) writePacket(pkt uint32, p []byte) error {
 	l.wmu.Lock()
 	defer l.wmu.Unlock()
+	return l.writePacketLocked(pkt, p)
+}
+
+func (l *lane) writePacketLocked(pkt uint32, p []byte) error {
 	scheme := l.scheme.Load()
 	var sizes []int
 	if scheme != nil && pkt < scheme.stop {
@@ -312,35 +389,87 @@ func (l *lane) writePacket(pkt uint32, p []byte) error {
 	return nil
 }
 
-// writeRawHeader writes a record holding nothing but a RAW frame: n raw bytes follow. Caller holds wmu.
+// writeRawHeader writes the record announcing a raw segment: the RAW frame, which has to be the last
+// frame of its record, padded in front like any small record (it would otherwise always be the same few
+// dozen bytes long, before every segment). n raw bytes follow. Caller holds wmu.
 func (l *lane) writeRawHeader(n int) error {
-	var hdr [frameHead + 4]byte
-	hdr[0], hdr[2] = frRaw, 4
-	binary.BigEndian.PutUint32(hdr[frameHead:], uint32(n))
-	return l.write(hdr[:])
+	return l.writeRawHeaderAfter(nil, n)
 }
 
-// writeRaw sends p as raw segments: a record with only a RAW frame, then the bytes straight to the socket.
+// writeRawHeaderAfter writes lead (encoded frames) and the RAW frame for n bytes as one record.
+func (l *lane) writeRawHeaderAfter(lead []byte, n int) error {
+	hdr := append(lead, frRaw, 0, 4, 0, 0, 0, 0)
+	binary.BigEndian.PutUint32(hdr[len(hdr)-4:], uint32(n))
+	return l.write(l.padSmall(hdr))
+}
+
+// firstRecordLen returns the length, header included, of the TLS record at the start of a followed by
+// b; 0 when the header is not all there.
+func firstRecordLen(a, b []byte) int {
+	var h [5]byte
+	k := copy(h[:], a)
+	if copy(h[k:], b) < 5-k {
+		return 0
+	}
+	return 5 + int(binary.BigEndian.Uint16(h[3:]))
+}
+
+// writeRaw sends p as raw segments: a record with the RAW frame, then the bytes straight to the socket.
+// It cuts p every maxSeg bytes regardless of what p holds, so streams use writeRawRecords instead.
 func (l *lane) writeRaw(p []byte) error {
-	l.wmu.Lock()
-	defer l.wmu.Unlock()
 	for len(p) > 0 {
 		seg := p[:minInt(len(p), maxSeg)]
 		p = p[len(seg):]
-		// Cork the socket between the RAW frame and its data, so that the record of a few dozen bytes
-		// does not travel in a packet of its own.
-		setCork(l.sock, true)
-		err := l.writeRawHeader(len(seg))
-		if err == nil {
-			_, err = l.sock.Write(seg)
-		}
-		setCork(l.sock, false)
-		if err != nil {
+		if err := l.writeRawRecords(seg, nil); err != nil {
 			return err
 		}
-		l.event("raw")
 	}
 	return nil
+}
+
+// maxPlain is the most plaintext one TLS record carries.
+const maxPlain = 16384
+
+// writeRawRecords sends a followed by b as one raw segment. Callers pass whole inner TLS records, at
+// most maxSeg bytes in all.
+//
+// When the first of those records fits, it goes inside the record that announces the segment, as DATA
+// in front of the RAW frame: the announcement is then not a small record of its own ahead of every
+// segment, but a record about as long as an inner one. A full-size inner record does not fit; then the
+// announcement stands alone (padded like any small record).
+func (l *lane) writeRawRecords(a, b []byte) error {
+	l.wmu.Lock()
+	defer l.wmu.Unlock()
+	var lead []byte
+	if first := firstRecordLen(a, b); first > 0 && first < len(a)+len(b) &&
+		len(l.prefix)+frameHead+first+frameHead+4 <= maxPlain {
+		rec := make([]byte, 0, first)
+		k := minInt(first, len(a))
+		rec = append(append(rec, a[:k]...), b[:first-k]...)
+		a, b = a[k:], b[first-k:]
+		lead = appendFrame(make([]byte, 0, frameHead+first+frameHead+4), frData, rec)
+		l.event("rawlead")
+	}
+	// Cork the socket between the RAW frame and its data, so that the announcement does not travel in a
+	// packet of its own.
+	setCork(l.sock, true)
+	err := l.writeRawHeaderAfter(lead, len(a)+len(b))
+	if err == nil {
+		switch {
+		case len(a) == 0:
+			_, err = l.sock.Write(b)
+		case len(b) == 0:
+			_, err = l.sock.Write(a)
+		default:
+			bufs := net.Buffers{a, b} // one writev
+			_, err = bufs.WriteTo(l.sock)
+		}
+	}
+	setCork(l.sock, false)
+	if err == nil {
+		l.event("raw")
+	}
+	return err
 }
 
 // spliceRaw sends the next n bytes of src as one raw segment without bringing them into user space where
@@ -368,4 +497,9 @@ func (l *lane) settingsText(extra string) []byte {
 		raw = "1"
 	}
 	return []byte("v=2\nraw=" + raw + extra)
+}
+
+// jitter returns d scaled by a random factor in [low, 1].
+func jitter(d time.Duration, low float64) time.Duration {
+	return time.Duration(float64(d) * (low + (1-low)*mrand.Float64()))
 }
